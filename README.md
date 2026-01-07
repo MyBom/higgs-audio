@@ -1,3 +1,19 @@
+## WakeWord 데이터셋 생성
+
+(원본 README를 따라 higgs-audio 설치 후 진행)
+```
+cd generate_wakewords
+mkdir generated_outputs
+
+python3 ./generation_aao.py --wakeword 봄봄아 --wakeword_tag bb
+```
+
+***generation 테스트***
+```
+python3 ./geneartion.py
+```
+-----
+
 <h1 align="center">Higgs Audio V2: Redefining Expressiveness in Audio Generation</h1>
 
 <div align="center" style="display: flex; justify-content: center; margin-top: 10px;">
