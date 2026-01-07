@@ -199,3 +199,6 @@ result/
 
 # Ruff
 .ruff_cache/
+
+# for wakeword generation
+generate_wakewords/generated_outputs

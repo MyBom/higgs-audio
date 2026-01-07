@@ -708,7 +708,7 @@ def main(
         if i <= 50:
             sid = f"f{i:04d}"
         else:
-            sid = f"m{i%50:04d}"
+            sid = f"m{i-50:04d}"
 
         if sid.startswith("f"):
             scene_prompt = f"{CURR_DIR}/scene_prompts/female_speaker.txt"
@@ -721,7 +721,7 @@ def main(
             with open(scene_prompt, "r", encoding="utf-8") as f:
                 scene_prompt = f.read().strip()
 
-        for j in range(20):
+        for j in range(1):
 
             out_path = f"{CURR_DIR}/generated_outputs/{wakeword_tag}/higgs-{wakeword_tag}-{sid}-{j}.wav"
 
@@ -780,21 +780,31 @@ def main(
                     logger.info(chunk_text)
                     logger.info("-----")
 
-            concat_wv, sr, text_output = model_client.generate(
-                messages=messages,
-                audio_ids=audio_ids,
-                chunked_text=chunked_text,
-                generation_chunk_buffer_size=generation_chunk_buffer_size,
-                temperature=temperature,
-                top_k=top_k,
-                top_p=top_p,
-                ras_win_len=ras_win_len,
-                ras_win_max_num_repeat=ras_win_max_num_repeat,
-                seed=seed,
-            )
+            while True:
+                concat_wv, sr, text_output = model_client.generate(
+                    messages=messages,
+                    audio_ids=audio_ids,
+                    chunked_text=chunked_text,
+                    generation_chunk_buffer_size=generation_chunk_buffer_size,
+                    temperature=temperature,
+                    top_k=top_k,
+                    top_p=top_p,
+                    ras_win_len=ras_win_len,
+                    ras_win_max_num_repeat=ras_win_max_num_repeat,
+                    seed=seed,
+                )
 
-            sf.write(out_path, concat_wv, sr)
-            logger.info(f"Wav file is saved to '{out_path}' with sample rate {sr}")
+                duration = len(concat_wv) / sr  # 초 단위
+
+                if duration < 0.4 or duration > 1.8:
+                    logger.warning(
+                        f"Generated audio is too short or too long ({duration:.2f} seconds). Regenerating..."
+                    )
+                    continue
+                else:
+                    sf.write(out_path, concat_wv, sr)
+                    logger.info(f"Wav file is saved to '{out_path}' with sample rate {sr}")
+                    break
 
 if __name__ == "__main__":
     main()
