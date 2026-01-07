@@ -721,7 +721,7 @@ def main(
             with open(scene_prompt, "r", encoding="utf-8") as f:
                 scene_prompt = f.read().strip()
 
-        for j in range(1):
+        for j in range(20):
 
             out_path = f"{CURR_DIR}/generated_outputs/{wakeword_tag}/higgs-{wakeword_tag}-{sid}-{j}.wav"
 
