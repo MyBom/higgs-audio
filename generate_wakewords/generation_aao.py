@@ -723,7 +723,7 @@ def main(
 
         for j in range(20):
 
-            out_path = f"{CURR_DIR}/generated_outputs/{wakeword_tag}/higgs-{wakeword_tag}-{sid}-{j}.wav"
+            out_path = f"{CURR_DIR}/generated_outputs/{wakeword_tag}/{wakeword_tag}-{sid}-{j}.wav"
 
             if j == 0:
                 transcript = wakeword + "."

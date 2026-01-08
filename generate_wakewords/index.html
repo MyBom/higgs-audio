@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WakeWord 학습데이터 필터링 시스템</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50">
+    <div id="app"></div>
+
+    <script type="module">
+        import React, { useState, useEffect, useRef } from 'https://esm.sh/react@18';
+        import ReactDOM from 'https://esm.sh/react-dom@18/client';
+        import { ChevronLeft, ChevronRight, Download } from 'https://esm.sh/lucide-react@0.263.1';
+
+        function AudioReviewApp() {
+            const [speakers, setSpeakers] = useState([]);
+            const [currentSpeakerIndex, setCurrentSpeakerIndex] = useState(0);
+            const [decisions, setDecisions] = useState({});
+            const [playingAudio, setPlayingAudio] = useState(null);
+            const [isLoading, setIsLoading] = useState(true);
+            const [folders, setFolders] = useState([]);
+            const [selectedFolder, setSelectedFolder] = useState('');
+            const audioRef = useRef(null);
+
+            // 서버에서 폴더 목록 가져오기
+            useEffect(() => {
+                const loadFolders = async () => {
+                    try {
+                        const response = await fetch('/api/generated-folders');
+                        const data = await response.json();
+                        setFolders(data.folders);
+                        if (data.folders.length > 0) {
+                            setSelectedFolder(data.folders[0]);
+                        }
+                    } catch (error) {
+                        console.error('Failed to load folders:', error);
+                    }
+                };
+                loadFolders();
+            }, []);
+
+            // 선택된 폴더가 변경되면 파일 목록 다시 로드
+            useEffect(() => {
+                if (!selectedFolder) return;
+                
+                const loadFiles = async () => {
+                    setIsLoading(true);
+                    try {
+                        const response = await fetch(`/api/speakers?folder=${selectedFolder}`);
+                        const data = await response.json();
+                        setSpeakers(data.speakers);
+                        setCurrentSpeakerIndex(0);
+                        setIsLoading(false);
+                    } catch (error) {
+                        console.error('Failed to load files:', error);
+                        setIsLoading(false);
+                    }
+                };
+                loadFiles();
+            }, [selectedFolder]);
+
+            // localStorage에서 저장된 결정사항 불러오기
+            useEffect(() => {
+                const saved = localStorage.getItem('audioReviewDecisions');
+                if (saved) {
+                    setDecisions(JSON.parse(saved));
+                }
+            }, []);
+
+            // 결정사항이 변경될 때마다 localStorage에 저장
+            useEffect(() => {
+                localStorage.setItem('audioReviewDecisions', JSON.stringify(decisions));
+            }, [decisions]);
+
+            const currentSpeaker = speakers[currentSpeakerIndex];
+
+            const handleDecision = (audioName, decision) => {
+                setDecisions(prev => {
+                    const currentDecision = prev[audioName];
+                    if (currentDecision === decision) {
+                        const newDecisions = { ...prev };
+                        delete newDecisions[audioName];
+                        return newDecisions;
+                    }
+                    return {
+                        ...prev,
+                        [audioName]: decision
+                    };
+                });
+            };
+
+            const playAudio = (audioFile, isReference = false) => {
+                const audioName = isReference ? 'reference' : audioFile;
+
+                if (playingAudio === audioName) {
+                    audioRef.current?.pause();
+                    setPlayingAudio(null);
+                } else {
+                    if (audioRef.current) {
+                        const audioUrl = isReference
+                            ? `/audio/reference/${currentSpeaker.sid}.wav`
+                            : `/audio/generated/${audioFile}?folder=${selectedFolder}`;
+
+                        audioRef.current.src = audioUrl;
+                        audioRef.current.play().catch(err => {
+                            console.error('재생 실패:', err);
+                            alert('오디오 재생에 실패했습니다.');
+                        });
+                        setPlayingAudio(audioName);
+                    }
+                }
+            };
+
+            const getKeepCount = (sid) => {
+                if (!sid) return 0;
+                const speaker = speakers.find(s => s.sid === sid);
+                if (!speaker) return 0;
+                return speaker.generatedAudios.filter(audio => decisions[audio] === 'keep').length;
+            };
+
+            const getDiscardCount = (sid) => {
+                if (!sid) return 0;
+                const speaker = speakers.find(s => s.sid === sid);
+                if (!speaker) return 0;
+                return speaker.generatedAudios.filter(audio => decisions[audio] === 'discard').length;
+            };
+
+            const getTotalProgress = () => {
+                let totalKeep = 0;
+                let totalDiscard = 0;
+                let totalFiles = 0;
+                speakers.forEach(speaker => {
+                    totalFiles += speaker.generatedAudios.length;
+                    totalKeep += speaker.generatedAudios.filter(audio => decisions[audio] === 'keep').length;
+                    totalDiscard += speaker.generatedAudios.filter(audio => decisions[audio] === 'discard').length;
+                });
+                return { totalKeep, totalDiscard, totalFiles };
+            };
+
+            const handleDownload = async () => {
+                const result = {
+                    kept: [],
+                    discarded: [],
+                    undecided: []
+                };
+
+                speakers.forEach(speaker => {
+                    speaker.generatedAudios.forEach(audio => {
+                        if (decisions[audio] === 'keep') {
+                            result.kept.push(audio);
+                        } else if (decisions[audio] === 'discard') {
+                            result.discarded.push(audio);
+                        } else {
+                            result.undecided.push(audio);
+                        }
+                    });
+                });
+
+                // 서버에 결과 전송
+                try {
+                    await fetch('/api/save-results', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(result)
+                    });
+                } catch (error) {
+                    console.error('Failed to save results:', error);
+                }
+
+                // 클라이언트에서도 다운로드
+                const content = JSON.stringify(result, null, 2);
+                const blob = new Blob([content], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'audio_review_results.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+
+            const handleReset = () => {
+                if (confirm('모든 검토 데이터를 초기화하시겠습니까?')) {
+                    setDecisions({});
+                    localStorage.removeItem('audioReviewDecisions');
+                }
+            };
+
+            useEffect(() => {
+                const audio = audioRef.current;
+                if (audio) {
+                    const handleEnded = () => setPlayingAudio(null);
+                    const handlePause = () => setPlayingAudio(null);
+                    audio.addEventListener('ended', handleEnded);
+                    audio.addEventListener('pause', handlePause);
+                    return () => {
+                        audio.removeEventListener('ended', handleEnded);
+                        audio.removeEventListener('pause', handlePause);
+                    };
+                }
+            }, []);
+
+            if (isLoading) {
+                return React.createElement('div', { className: 'min-h-screen bg-gray-50 flex items-center justify-center' },
+                    React.createElement('div', { className: 'text-center' },
+                        React.createElement('div', { className: 'text-xl font-semibold text-gray-700' }, '로딩 중...')
+                    )
+                );
+            }
+
+            if (folders.length === 0) {
+                return React.createElement('div', { className: 'min-h-screen bg-gray-50 flex items-center justify-center' },
+                    React.createElement('div', { className: 'text-center' },
+                        React.createElement('div', { className: 'text-xl font-semibold text-gray-700' }, 'Generated 폴더에 하위 폴더가 없습니다')
+                    )
+                );
+            }
+
+            if (speakers.length === 0) {
+                return React.createElement('div', { className: 'min-h-screen bg-gray-50 flex items-center justify-center' },
+                    React.createElement('div', { className: 'text-center' },
+                        React.createElement('div', { className: 'text-xl font-semibold text-gray-700' }, '화자 데이터가 없습니다')
+                    )
+                );
+            }
+
+            const progress = getTotalProgress();
+            const keepCount = getKeepCount(currentSpeaker?.sid);
+            const discardCount = getDiscardCount(currentSpeaker?.sid);
+
+            return React.createElement('div', { className: 'min-h-screen bg-gray-50 p-6' },
+                React.createElement('audio', { ref: audioRef }),
+                React.createElement('div', { className: 'max-w-4xl mx-auto' },
+                    // 헤더
+                    React.createElement('div', { className: 'bg-white rounded-lg shadow-sm p-6 mb-6' },
+                        React.createElement('h1', { className: 'text-2xl font-bold text-gray-800 mb-4' }, 'WakeWord 학습데이터 필터링 시스템'),
+                        
+                        // 폴더 선택
+                        React.createElement('div', { className: 'mb-4' },
+                            React.createElement('label', { className: 'block text-sm font-medium text-gray-700 mb-2' }, 'WakeWord 태그 선택'),
+                            React.createElement('select', {
+                                value: selectedFolder,
+                                onChange: (e) => setSelectedFolder(e.target.value),
+                                className: 'w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+                            }, folders.map(folder => 
+                                React.createElement('option', { key: folder, value: folder }, folder)
+                            ))
+                        ),
+                        
+                        React.createElement('div', { className: 'flex justify-between items-center' },
+                            React.createElement('div', { className: 'text-sm text-gray-600' },
+                                React.createElement('div', null, `전체: Keep ${progress.totalKeep} / Discard ${progress.totalDiscard} / Total ${progress.totalFiles}`)
+                            ),
+                            React.createElement('div', { className: 'flex gap-2' },
+                                React.createElement('button', {
+                                    onClick: handleReset,
+                                    className: 'px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300'
+                                }, '초기화'),
+                                React.createElement('button', {
+                                    onClick: handleDownload,
+                                    className: 'px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 flex items-center gap-2'
+                                },
+                                    React.createElement(Download, { size: 16 }),
+                                    '결과 다운로드'
+                                )
+                            )
+                        )
+                    ),
+                    
+                    // 화자 네비게이션
+                    React.createElement('div', { className: 'bg-white rounded-lg shadow-sm p-6 mb-6' },
+                        React.createElement('div', { className: 'flex items-center justify-between' },
+                            React.createElement('button', {
+                                onClick: () => setCurrentSpeakerIndex(Math.max(0, currentSpeakerIndex - 1)),
+                                disabled: currentSpeakerIndex === 0,
+                                className: 'p-2 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed'
+                            }, React.createElement(ChevronLeft, { size: 24 })),
+                            
+                            React.createElement('div', { className: 'text-center' },
+                                React.createElement('h2', { className: 'text-xl font-bold text-gray-800' }, `Speaker ID: ${currentSpeaker.sid}`),
+                                React.createElement('p', { className: 'text-sm text-gray-600 mt-1' }, `${currentSpeakerIndex + 1} / ${speakers.length}`),
+                                React.createElement('div', { className: 'flex gap-4 justify-center mt-2 text-sm' },
+                                    React.createElement('span', { className: `font-medium ${keepCount >= 10 ? 'text-green-600' : 'text-orange-600'}` }, `Keep: ${keepCount} / 10`),
+                                    React.createElement('span', { className: 'text-red-600 font-medium' }, `Discard: ${discardCount}`),
+                                    React.createElement('span', { className: 'text-gray-600' }, `Total: ${currentSpeaker.generatedAudios.length}`)
+                                )
+                            ),
+                            
+                            React.createElement('button', {
+                                onClick: () => setCurrentSpeakerIndex(Math.min(speakers.length - 1, currentSpeakerIndex + 1)),
+                                disabled: currentSpeakerIndex === speakers.length - 1,
+                                className: 'p-2 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed'
+                            }, React.createElement(ChevronRight, { size: 24 }))
+                        )
+                    ),
+                    
+                    // Reference Audio
+                    React.createElement('div', { className: 'bg-white rounded-lg shadow-sm p-6 mb-6' },
+                        React.createElement('h3', { className: 'text-lg font-semibold text-gray-800 mb-4' }, 'Reference Audio'),
+                        React.createElement('div', {
+                            onClick: () => playAudio(currentSpeaker.referenceAudio, true),
+                            className: `flex items-center gap-4 p-4 rounded cursor-pointer transition ${
+                                playingAudio === 'reference'
+                                    ? 'bg-blue-100 border-2 border-blue-400'
+                                    : 'bg-blue-50 hover:bg-blue-100 border-2 border-transparent'
+                            }`
+                        },
+                            React.createElement('div', { className: `w-3 h-3 rounded-full ${playingAudio === 'reference' ? 'bg-blue-600 animate-pulse' : 'bg-blue-400'}` }),
+                            React.createElement('span', { className: 'text-gray-700 font-medium' }, currentSpeaker.referenceAudio)
+                        )
+                    ),
+                    
+                    // Generated Audios
+                    React.createElement('div', { className: 'bg-white rounded-lg shadow-sm p-6' },
+                        React.createElement('h3', { className: 'text-lg font-semibold text-gray-800 mb-4' }, 'Generated Audio'),
+                        currentSpeaker.generatedAudios.length === 0
+                            ? React.createElement('div', { className: 'text-center py-8 text-gray-500' }, '이 화자의 generated audio 파일이 없습니다')
+                            : React.createElement('div', { className: 'space-y-2' },
+                                currentSpeaker.generatedAudios.map((audio) => {
+                                    const decision = decisions[audio];
+                                    const isPlaying = playingAudio === audio;
+                                    
+                                    return React.createElement('div', {
+                                        key: audio,
+                                        onClick: () => playAudio(audio),
+                                        className: `flex items-center gap-3 p-3 rounded cursor-pointer transition ${
+                                            decision === 'keep'
+                                                ? 'bg-green-50 border-2 border-green-400'
+                                                : decision === 'discard'
+                                                ? 'bg-red-50 border-2 border-red-400'
+                                                : isPlaying
+                                                ? 'bg-gray-100 border-2 border-gray-400'
+                                                : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
+                                        }`
+                                    },
+                                        React.createElement('div', { className: `w-3 h-3 rounded-full flex-shrink-0 ${isPlaying ? 'bg-gray-600 animate-pulse' : 'bg-gray-400'}` }),
+                                        React.createElement('span', { className: 'flex-1 text-gray-700 text-sm font-mono' }, audio),
+                                        React.createElement('div', { className: 'flex gap-2' },
+                                            React.createElement('button', {
+                                                onClick: (e) => {
+                                                    e.stopPropagation();
+                                                    handleDecision(audio, 'keep');
+                                                },
+                                                className: `px-4 py-1.5 rounded font-medium transition ${
+                                                    decision === 'keep'
+                                                        ? 'bg-green-600 text-white'
+                                                        : 'bg-green-100 text-green-700 hover:bg-green-200'
+                                                }`
+                                            }, decision === 'keep' ? '✓ Keep' : 'Keep'),
+                                            React.createElement('button', {
+                                                onClick: (e) => {
+                                                    e.stopPropagation();
+                                                    handleDecision(audio, 'discard');
+                                                },
+                                                className: `px-4 py-1.5 rounded font-medium transition ${
+                                                    decision === 'discard'
+                                                        ? 'bg-red-600 text-white'
+                                                        : 'bg-red-100 text-red-700 hover:bg-red-200'
+                                                }`
+                                            }, decision === 'discard' ? '✗ Discard' : 'Discard')
+                                        )
+                                    );
+                                })
+                            )
+                    )
+                )
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('app'));
+        root.render(React.createElement(AudioReviewApp));
+    </script>
+</body>
+</html>

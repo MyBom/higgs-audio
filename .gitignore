@@ -202,3 +202,5 @@ result/
 
 # for wakeword generation
 generate_wakewords/generated_outputs
+generate_wakewords/filtered_dataset
+generate_wakewords/review_results.*
